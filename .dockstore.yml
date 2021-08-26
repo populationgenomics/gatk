@@ -91,6 +91,7 @@ workflows:
      filters:
        branches:
          - master
+         - kc_ranges_extract
          - ah_var_store
    - name: GvsImportGenomes
      subclass: WDL
@@ -100,6 +101,7 @@ workflows:
      filters:
        branches:
          - master
+         - kc_ranges_extract
          - ah_var_store
    - name: GvsPrepareCallset
      subclass: WDL
