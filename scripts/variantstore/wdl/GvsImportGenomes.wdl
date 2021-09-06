@@ -218,6 +218,7 @@ workflow GvsImportGenomes {
       output_directory = output_directory,
       load_sample_info_done = SetIsLoadedColumn.done,
       load_pet_done = LoadPetTable.done,
+      load_ref_ranges_done = LoadRefRangesTable.done,
       load_vet_done = LoadVetTable.done,
       service_account_json_path = service_account_json_path,
       preemptible_tries = preemptible_tries
@@ -298,8 +299,9 @@ task ReleaseLock {
     String run_uuid
     String output_directory
     String load_sample_info_done
-    Array[String] load_pet_done
-    Array[String] load_vet_done
+    Array[String]? load_pet_done
+    Array[String]? load_ref_ranges_done
+    Array[String]? load_vet_done
     String? service_account_json_path
 
     # runtime
