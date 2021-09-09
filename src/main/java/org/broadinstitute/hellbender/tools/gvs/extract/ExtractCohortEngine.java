@@ -83,7 +83,7 @@ public class ExtractCohortEngine {
      * This value is used to construct the genotype information of those missing samples
      * when they are merged together into a {@link VariantContext} object
      */
-    // TODO: should this be read from the data table instead, or at least parameterized?
+    // MUST TODO: should this be read from the data table instead, or at least parameterized?
     public static int MISSING_CONF_THRESHOLD = 60;
     public static String INFERRED_STATE = "6";
 
