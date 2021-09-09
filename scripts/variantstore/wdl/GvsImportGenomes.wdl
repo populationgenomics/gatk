@@ -10,10 +10,10 @@ workflow GvsImportGenomes {
     File? sample_map
     String project_id
     String dataset_name
-    String? pet_schema = "location:INTEGER,sample_id:INTEGER,state:STRING"
-    String? vet_schema = "sample_id:INTEGER,location:INTEGER,ref:STRING,alt:STRING,AS_RAW_MQ:STRING,AS_RAW_MQRankSum:STRING,QUALapprox:STRING,AS_QUALapprox:STRING,AS_RAW_ReadPosRankSum:STRING,AS_SB_TABLE:STRING,AS_VarDP:STRING,call_GT:STRING,call_AD:STRING,call_GQ:INTEGER,call_PGT:STRING,call_PID:STRING,call_PL:STRING"
-    # TODO: can we make these fields required, does that really matter?
-    String? ref_ranges_schema = "location:INTEGER,sample_id:INTEGER,length:INTEGER,state:STRING"
+    String pet_schema_json = '[{"name": "location","type": "INTEGER","mode": "REQUIRED"},{"name": "sample_id","type": "INTEGER","mode": "REQUIRED"},{"name": "state","type": "STRING","mode": "REQUIRED"}]'
+    String vet_schema_json = '[{"name": "sample_id", "type" :"INTEGER", "mode": "REQUIRED"},{"name": "location", "type" :"INTEGER", "mode": "REQUIRED"},{"name": "ref", "type" :"STRING", "mode": "REQUIRED"},{"name": "alt", "type" :"STRING", "mode": "REQUIRED"},{"name": "AS_RAW_MQ", "type" :"STRING", "mode": "NULLABLE"},{"name": "AS_RAW_MQRankSum", "type" :"STRING", "mode": "NULLABLE"},{"name": "QUALapprox", "type" :"STRING", "mode": "NULLABLE"},{"name": "AS_QUALapprox", "type" :"STRING", "mode": "NULLABLE"},{"name": "AS_RAW_ReadPosRankSum", "type" :"STRING", "mode": "NULLABLE"},{"name": "AS_SB_TABLE", "type" :"STRING", "mode": "NULLABLE"},{"name": "AS_VarDP", "type" :"STRING", "mode": "NULLABLE"},{"name": "call_GT", "type" :"STRING", "mode": "NULLABLE"},{"name": "call_AD", "type" :"STRING", "mode": "NULLABLE"},{"name": "call_GQ", "type" :"INTEGER", "mode": "NULLABLE"},{"name": "call_PGT", "type" :"STRING", "mode": "NULLABLE"},{"name": "call_PID", "type" :"STRING", "mode": "NULLABLE"},{"name": "call_PL", "type" :"STRING", "mode": "NULLABLE"}]'
+    String ref_ranges_schema_json = '[{"name": "location","type": "INTEGER","mode": "REQUIRED"},{"name": "sample_id","type": "INTEGER","mode": "REQUIRED"},{"name": "length","type": "INTEGER","mode": "REQUIRED"},{"name": "state","type": "STRING","mode": "REQUIRED"}]'
+
     String? service_account_json_path
     String? drop_state = "SIXTY"
     Boolean? drop_state_includes_greater_than = false
@@ -69,7 +69,7 @@ workflow GvsImportGenomes {
         dataset_name = dataset_name,
         datatype = "pet",
         max_table_id = select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]),
-        schema = pet_schema,
+        schema_json = pet_schema_json,
         superpartitioned = "true",
         partitioned = "true",
         uuid = "",
@@ -84,7 +84,7 @@ workflow GvsImportGenomes {
             dataset_name = dataset_name,
             datatype = "ref_ranges",
             max_table_id = select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]),
-            schema = ref_ranges_schema,
+            schema_json = ref_ranges_schema_json,
             superpartitioned = "true",
             partitioned = "true",
             uuid = "",
@@ -99,7 +99,7 @@ workflow GvsImportGenomes {
       dataset_name = dataset_name,
       datatype = "vet",
       max_table_id = select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]),
-      schema = vet_schema,
+      schema_json = vet_schema_json,
       superpartitioned = "true",
       partitioned = "true",
       uuid = "",
@@ -156,7 +156,7 @@ workflow GvsImportGenomes {
         storage_location = output_directory,
         datatype = "pet",
         superpartitioned = "true",
-        schema = pet_schema,
+        schema_json = pet_schema_json,
         service_account_json_path = service_account_json_path,
         table_creation_done = CreatePetTables.done,
         tsv_creation_done = CreateImportTsvs.done,
@@ -174,7 +174,7 @@ workflow GvsImportGenomes {
                 storage_location = output_directory,
                 datatype = "ref_ranges",
                 superpartitioned = "true",
-                schema = ref_ranges_schema,
+                schema_json = ref_ranges_schema_json,
                 service_account_json_path = service_account_json_path,
                 table_creation_done = CreateRefRangesTables.done,
                 tsv_creation_done = CreateImportTsvs.done,
@@ -192,7 +192,7 @@ workflow GvsImportGenomes {
       storage_location = output_directory,
       datatype = "vet",
       superpartitioned = "true",
-      schema = vet_schema,
+      schema_json = vet_schema_json,
       service_account_json_path = service_account_json_path,
       table_creation_done = CreateVetTables.done,
       tsv_creation_done = CreateImportTsvs.done,
@@ -638,7 +638,7 @@ task CreateTables {
       String dataset_name
       String datatype
       Int max_table_id
-      String? schema
+      String schema_json
       String superpartitioned
       String partitioned
       String uuid
@@ -697,7 +697,8 @@ task CreateTables {
       set -e
       if [ $BQ_SHOW_RC -ne 0 ]; then
         echo "making table $TABLE"
-        bq --location=US mk ${PARTITION_STRING} ${CLUSTERING_STRING} --project_id=~{project_id} $TABLE ~{schema}
+        echo '~{schema_json}' > schema.json
+        bq --location=US mk ${PARTITION_STRING} ${CLUSTERING_STRING} --project_id=~{project_id} $TABLE schema.json
       fi
     done
   >>>
@@ -727,7 +728,7 @@ task LoadTable {
     String storage_location
     String datatype
     String superpartitioned
-    String? schema
+    String schema_json
     String? service_account_json_path
     String table_creation_done
     Array[String] tsv_creation_done
@@ -791,8 +792,10 @@ task LoadTable {
 
           # execute bq load command, get bq load job id, add details per set to tmp file
           echo "Running BigQuery load for set $set."
+          echo '~{schema_json}' > schema.json
+
           bq load --quiet --nosync --location=US --project_id=~{project_id} --skip_leading_rows=1 --source_format=CSV -F "\t" \
-            "$TABLE" "${DIR}set_${set}/${FILES}" ~{schema} > status_bq_submission
+            "$TABLE" "${DIR}set_${set}/${FILES}" schema.json > status_bq_submission
 
           cat status_bq_submission | tail -n 1 > status_bq_submission_last_line
 
