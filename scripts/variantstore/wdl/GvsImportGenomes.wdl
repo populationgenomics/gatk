@@ -212,6 +212,7 @@ workflow GvsImportGenomes {
   call SetIsLoadedColumn {
     input:
       load_vet_done = LoadVetTable.done,
+      load_ref_ranges_done = LoadRefRangesTable.done,
       load_pet_done = LoadPetTable.done,
       dataset_name = dataset_name,
       gvs_ids = select_first([GetSampleIds.gvs_ids, GetMaxTableIdLegacy.gvs_ids]),
@@ -737,7 +738,7 @@ task LoadTable {
     String superpartitioned
     String schema_json
     String? service_account_json_path
-    String table_creation_done
+    String? table_creation_done
     Array[String] tsv_creation_done
     String run_uuid
 
@@ -879,8 +880,9 @@ task SetIsLoadedColumn {
   }
 
   input {
-    Array[String] load_vet_done
-    Array[String] load_pet_done
+    Array[String]? load_vet_done
+    Array[String]? load_pet_done
+    Array[String]? load_ref_ranges_done
     String dataset_name
     String project_id
     File gvs_ids
