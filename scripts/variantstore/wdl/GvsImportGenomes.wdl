@@ -63,6 +63,7 @@ workflow GvsImportGenomes {
     }
   }
 
+  if (load_pet) {
     call CreateTables as CreatePetTables {
       input:
         project_id = project_id,
@@ -77,7 +78,9 @@ workflow GvsImportGenomes {
         preemptible_tries = preemptible_tries,
         docker = docker_final
     }
+  }
 
+  if (load_ref_ranges) {
     call CreateTables as CreateRefRangesTables {
         input:
             project_id = project_id,
@@ -92,6 +95,7 @@ workflow GvsImportGenomes {
             preemptible_tries = preemptible_tries,
             docker = docker_final
     }
+  }
 
   call CreateTables as CreateVetTables {
   	input:
@@ -147,6 +151,7 @@ workflow GvsImportGenomes {
     }
   }
 
+  if (load_pet) {
     scatter (i in range(select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]))) {
       call LoadTable as LoadPetTable {
       input:
@@ -164,7 +169,9 @@ workflow GvsImportGenomes {
         run_uuid = SetLock.run_uuid
       }
     }
+  }
 
+  if (load_ref_ranges) {
     scatter (i in range(select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]))) {
         call LoadTable as LoadRefRangesTable {
             input:
@@ -182,6 +189,7 @@ workflow GvsImportGenomes {
                 run_uuid = SetLock.run_uuid
         }
     }
+  }
 
   scatter (i in range(select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]))) {
     call LoadTable as LoadVetTable {
@@ -562,7 +570,7 @@ task CreateImportTsvs {
           if [ ~{call_cache_tsvs} = 'true' ]; then
             echo "Checking for files to call cache"
 
-            declare -a TABLETYPES=("sample_info" "pet" "vet", "ref_ranges")
+            declare -a TABLETYPES=("vet" ~{if load_pet then "pet" else ""} ~{if load_ref_ranges then "ref_ranges" else ""})
             ALL_FILES_EXIST='true'
             for TABLETYPE in ${TABLETYPES[@]}; do
                 FILEPATH="~{output_directory}/${TABLETYPE}_tsvs/**${TABLETYPE}_*_${input_vcf_basename}.tsv"
@@ -607,7 +615,6 @@ task CreateImportTsvs {
                 -SNM ~{sample_map} \
                 --ref-version 38
 
-              gsutil -m mv sample_info_*.tsv ~{output_directory}/sample_info_tsvs/
               gsutil -m mv pet_*.tsv ~{output_directory}/pet_tsvs/
               gsutil -m mv ref_ranges_*.tsv ~{output_directory}/ref_ranges_tsvs/
               gsutil -m mv vet_*.tsv ~{output_directory}/vet_tsvs/
