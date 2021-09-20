@@ -119,6 +119,7 @@ workflows:
        branches:
          - master
          - ah_var_store
+         - rc-VS-149-vat-export
    - name: GvsValidateVat
      subclass: WDL
      primaryDescriptorPath: /scripts/variantstore/variant_annotations_table/GvsValidateVAT.wdl
