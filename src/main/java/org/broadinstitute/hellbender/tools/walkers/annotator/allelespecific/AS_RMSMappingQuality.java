@@ -168,7 +168,7 @@ public final class AS_RMSMappingQuality implements InfoFieldAnnotation, AS_Stand
         //get per-allele data by splitting on allele delimiter
         final String[] rawDataPerAllele = rawDataString.split(AnnotationUtils.ALLELE_SPECIFIC_SPLIT_REGEX);
         for (int i=0; i<rawDataPerAllele.length; i++) {
-            final String alleleData = rawDataPerAllele[i];
+            final String alleleData = rawDataPerAllele[i].length() == 0 ? "0" : rawDataPerAllele[i];
             myData.putAttribute(myData.getAlleles().get(i), Double.parseDouble(alleleData));
         }
     }
