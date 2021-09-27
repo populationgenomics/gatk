@@ -375,7 +375,7 @@ public class VariantDataManager {
             if( jitter && (annotationKey.equalsIgnoreCase(GATKVCFConstants.AS_RMS_MAPPING_QUALITY_KEY))){
                 value += vrac.MQ_JITTER * Utils.getRandomGenerator().nextGaussian();
             }
-        } catch( NumberFormatException e ) {
+        } catch( NumberFormatException | IndexOutOfBoundsException e ) {
             value = Double.NaN; // VQSR works with missing data by marginalizing over the missing dimension when evaluating the Gaussian mixture model
         }
 
