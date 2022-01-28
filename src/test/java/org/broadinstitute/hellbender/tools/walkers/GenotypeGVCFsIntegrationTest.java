@@ -11,9 +11,11 @@ import htsjdk.variant.vcf.VCFConstants;
 import htsjdk.variant.vcf.VCFHeader;
 import htsjdk.variant.vcf.VCFHeaderLineCount;
 import org.apache.commons.codec.digest.DigestUtils;
+import org.apache.commons.lang3.tuple.Pair;
 import org.broadinstitute.barclay.argparser.Argument;
 import org.broadinstitute.barclay.argparser.CommandLineException;
 import org.broadinstitute.hellbender.CommandLineProgramTest;
+import org.broadinstitute.hellbender.cmdline.GATKPlugin.DefaultGATKVariantAnnotationArgumentCollection;
 import org.broadinstitute.hellbender.cmdline.StandardArgumentDefinitions;
 import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.testutils.ArgumentsBuilder;
@@ -22,6 +24,8 @@ import org.broadinstitute.hellbender.testutils.VariantContextTestUtils;
 import org.broadinstitute.hellbender.tools.genomicsdb.GenomicsDBArgumentCollection;
 import org.broadinstitute.hellbender.tools.genomicsdb.GenomicsDBImport;
 import org.broadinstitute.hellbender.tools.walkers.annotator.RMSMappingQuality;
+import org.broadinstitute.hellbender.tools.walkers.annotator.allelespecific.AS_QualByDepth;
+import org.broadinstitute.hellbender.tools.walkers.genotyper.GenotypeCalculationArgumentCollection;
 import org.broadinstitute.hellbender.utils.SimpleInterval;
 import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.io.IOUtils;
@@ -256,10 +260,22 @@ public class GenotypeGVCFsIntegrationTest extends CommandLineProgramTest {
     public void assertMatchingGenotypesFromGenomicsDB(File input, File expected, Locatable interval, String reference) throws IOException {
         final File tempGenomicsDB = GenomicsDBTestUtils.createTempGenomicsDB(input, interval);
         final String genomicsDBUri = GenomicsDBTestUtils.makeGenomicsDBUri(tempGenomicsDB);
-        runGenotypeGVCFSAndAssertSomething(genomicsDBUri, expected, NO_EXTRA_ARGS, VariantContextTestUtils::assertVariantContextsHaveSameGenotypes, reference);
+        final List<String> args = new ArrayList<String>();
+        args.add("--"+GenotypeCalculationArgumentCollection.MAX_ALTERNATE_ALLELES_LONG_NAME);
+        args.add("2"); // Too small max_alternate_alleles arg to GenomicsDB, should fail
+        try {
+            File output = runGenotypeGVCFS(genomicsDBUri, expected, args, reference);
+            Assert.fail("Expected exception not thrown");
+        } catch (IllegalStateException e) {
+           // Pass
+        }
+
+        args.clear();
+        args.add("--"+GenotypeCalculationArgumentCollection.MAX_ALTERNATE_ALLELES_LONG_NAME);
+        args.add("8");
+        runGenotypeGVCFSAndAssertSomething(genomicsDBUri, expected, args, VariantContextTestUtils::assertVariantContextsHaveSameGenotypes, reference);
 
         // The default option with GenomicsDB input uses VCFCodec for decoding, test BCFCodec explicitly
-        final List<String> args = new ArrayList<String>();
         args.add("--"+GenomicsDBArgumentCollection.USE_BCF_CODEC_LONG_NAME);
         runGenotypeGVCFSAndAssertSomething(genomicsDBUri, expected, args, VariantContextTestUtils::assertVariantContextsHaveSameGenotypes, reference);
     }
@@ -358,9 +374,8 @@ public class GenotypeGVCFsIntegrationTest extends CommandLineProgramTest {
         );
     }
 
-    private void runGenotypeGVCFSAndAssertSomething(String input, File expected, List<String> additionalArguments, BiConsumer<VariantContext, VariantContext> assertion, String reference) throws IOException {
+    private File runGenotypeGVCFS(String input, File expected, List<String> additionalArguments, String reference) {
         final File output = UPDATE_EXACT_MATCH_EXPECTED_OUTPUTS ? expected : createTempFile("genotypegvcf", ".vcf");
-
         final ArgumentsBuilder args = new ArgumentsBuilder();
         args.addReference(new File(reference))
                 .add("V", input)
@@ -372,6 +387,13 @@ public class GenotypeGVCFsIntegrationTest extends CommandLineProgramTest {
 
         Utils.resetRandomGenerator();
         runCommandLine(args);
+
+        return output;
+    }
+
+    private void runGenotypeGVCFSAndAssertSomething(String input, File expected, List<String> additionalArguments, BiConsumer<VariantContext, VariantContext> assertion, String reference) throws IOException {
+        final File output = runGenotypeGVCFS(input, expected, additionalArguments, reference);
+        Assert.assertTrue(output.exists());
 
         if (! UPDATE_EXACT_MATCH_EXPECTED_OUTPUTS) {
             final List<VariantContext> expectedVC = VariantContextTestUtils.getVariantContexts(expected);
@@ -733,5 +755,72 @@ public class GenotypeGVCFsIntegrationTest extends CommandLineProgramTest {
         Assert.assertTrue(ic2 > 0); //if GQ0s with no data are output as hom-ref, then ic2 is ~0.7
         Assert.assertEquals(ic1, ic2, 0.1); //there will be some difference because the old version zeros out low depth hom-refs and makes them no-calls
         Assert.assertEquals(vcWithoutPLs.getAttributeAsInt(VCFConstants.ALLELE_NUMBER_KEY, 0), 114);  //don't count no-calls that are PL=[0,0,0] in classic VCF
+    }
+
+    @Test
+    public void testMissingDPVariant() {
+        final File inputNoDP = getTestFile("homVarNoDP.g.vcf");
+        final File outputNoDP = createTempFile("outputNoDP", ".vcf");
+
+        final ArgumentsBuilder args = new ArgumentsBuilder();
+        args.addReference(hg38Reference)
+                .addVCF(inputNoDP)
+                .addOutput(outputNoDP)
+                .add(GenotypeCalculationArgumentCollection.CALL_CONFIDENCE_SHORT_NAME, 0);
+        runCommandLine(args);
+
+        final List<VariantContext> noDPVCs = VariantContextTestUtils.getVariantContexts(outputNoDP);
+        Assert.assertEquals(noDPVCs.size(), 0);
+
+        final File input1DP = getTestFile("homVar1DP.g.vcf");
+        final File output1DP = createTempFile("output1DP" ,".vcf");
+
+        final ArgumentsBuilder args2 = new ArgumentsBuilder();
+        args2.addReference(hg38Reference)
+                .addVCF(input1DP)
+                .addOutput(output1DP)
+                .add(StandardArgumentDefinitions.ANNOTATION_GROUP_SHORT_NAME, "StandardAnnotation")
+                .add(StandardArgumentDefinitions.ANNOTATION_GROUP_SHORT_NAME, "AS_StandardAnnotation");
+        runCommandLine(args2);
+
+        //interfaces can't have static methods, so we have to create an annotation class to query its keys
+        final AS_QualByDepth annotation = new AS_QualByDepth();
+        final List<VariantContext> oneDPVCs = VariantContextTestUtils.getVariantContexts(output1DP);
+        Assert.assertEquals(oneDPVCs.size(), 1);
+        final VariantContext vc = oneDPVCs.get(0);
+        Assert.assertTrue(vc.getAttributes().keySet().containsAll(annotation.getKeyNames()));
+        Assert.assertFalse(vc.getAttributes().keySet().contains(annotation.getPrimaryRawKey()));
+        Assert.assertFalse(vc.getAttributes().keySet().contains(annotation.getSecondaryRawKeys().get(0)));
+        Assert.assertFalse(vc.getAttributes().keySet().contains(annotation.getSecondaryRawKeys().get(1)));
+    }
+
+    //as for issue #7483 where two GVCFs merged with GenomicsDB produce some empty annotations fields
+    @Test
+    public void testOnEmptyAnnotations() {
+        final String input = getTestDataDir() + "/walkers/GnarlyGenotyper/emptyASAnnotations.g.vcf";
+        final File output = createTempFile("GGVCFsOutput", ".vcf");
+
+        final ArgumentsBuilder args = new ArgumentsBuilder();
+        args.addReference(new File(hg38Reference))
+                .add("V", input)
+                .add("G", "StandardAnnotation")
+                .add("G", "AS_StandardAnnotation")
+                .addOutput(output)
+                .add(StandardArgumentDefinitions.ADD_OUTPUT_VCF_COMMANDLINE, "false");
+        runCommandLine(args);
+
+        final Pair<VCFHeader, List<VariantContext>> outputData = VariantContextTestUtils.readEntireVCFIntoMemory(output.getAbsolutePath());
+        Assert.assertEquals(outputData.getRight().size(), 1);
+        final VariantContext vc = outputData.getRight().get(0);
+        //span del (*) has empty data, but gets "genotyped out"
+        Assert.assertTrue(vc.hasAttribute(GATKVCFConstants.AS_RMS_MAPPING_QUALITY_KEY));
+        final List<String> mqs = vc.getAttributeAsStringList(GATKVCFConstants.AS_RMS_MAPPING_QUALITY_KEY,"");
+        Assert.assertEquals(mqs.size(), 1);
+        Assert.assertTrue(vc.hasAttribute(GATKVCFConstants.AS_FISHER_STRAND_KEY));
+        final List<String> fss = vc.getAttributeAsStringList(GATKVCFConstants.AS_RMS_MAPPING_QUALITY_KEY,"");
+        Assert.assertEquals(fss.size(), 1);
+        Assert.assertTrue(vc.hasAttribute(GATKVCFConstants.AS_STRAND_ODDS_RATIO_KEY));
+        final List<String> sors = vc.getAttributeAsStringList(GATKVCFConstants.AS_STRAND_ODDS_RATIO_KEY,"");
+        Assert.assertEquals(sors.size(), 1);
     }
 }

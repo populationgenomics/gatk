@@ -93,6 +93,9 @@ public final class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
 
     // writes Haplotypes to a bam file when the -bamout option is specified
     private Optional<HaplotypeBAMWriter> haplotypeBAMWriter;
+    // writes Variants from assembly graph
+    private Optional<VariantContextWriter> assembledEventMapVcfOutputWriter;
+    private Optional<PriorityQueue<VariantContext>> assembledEventMapVariants;
 
     private Set<String> sampleSet;
     private SampleList samplesList;
@@ -239,6 +242,16 @@ public final class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
 
         haplotypeBAMWriter = AssemblyBasedCallerUtils.createBamWriter(hcArgs, createBamOutIndex, createBamOutMD5, readsHeader);
         assemblyEngine = hcArgs.createReadThreadingAssembler();
+        assembledEventMapVcfOutputWriter = Optional.ofNullable(hcArgs.assemblerArgs.debugAssemblyVariantsOut != null ?
+                GATKVariantContextUtils.createVCFWriter(
+                        new GATKPath(hcArgs.assemblerArgs.debugAssemblyVariantsOut).toPath(),
+                        readsHeader.getSequenceDictionary(),
+                        false,
+                        Options.DO_NOT_WRITE_GENOTYPES, Options.INDEX_ON_THE_FLY)
+                : null);
+        assembledEventMapVariants = Optional.ofNullable(hcArgs.assemblerArgs.debugAssemblyVariantsOut != null ?
+                new PriorityQueue<>(200, new VariantContextComparator(readsHeader.getSequenceDictionary())) : null);
+        assembledEventMapVcfOutputWriter.ifPresent(writer -> writeHeader(writer, readsHeader.getSequenceDictionary(), new HashSet<>()));
         likelihoodCalculationEngine = AssemblyBasedCallerUtils.createLikelihoodCalculationEngine(hcArgs.likelihoodArgs, !hcArgs.softClipLowQualityEnds);
     }
 
@@ -267,7 +280,7 @@ public final class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
         }
 
         if ( emitReferenceConfidence() ) {
-            hcArgs.standardArgs.genotypeArgs.STANDARD_CONFIDENCE_FOR_CALLING = -0.0;
+            hcArgs.standardArgs.genotypeArgs.standardConfidenceForCalling = -0.0;
 
             logger.info("Standard Emitting and Calling confidence set to 0.0 for reference-model confidence output");
             if ( ! hcArgs.standardArgs.annotateAllSitesWithPLs ) {
@@ -320,7 +333,7 @@ public final class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
         activeRegionArgs.copyStandardCallerArgsFrom(hcArgs.standardArgs);
 
         activeRegionArgs.outputMode = OutputMode.EMIT_VARIANTS_ONLY;
-        activeRegionArgs.genotypeArgs.STANDARD_CONFIDENCE_FOR_CALLING = Math.min(MAXMIN_CONFIDENCE_FOR_CONSIDERING_A_SITE_AS_POSSIBLE_VARIANT_IN_ACTIVE_REGION_DISCOVERY, hcArgs.standardArgs.genotypeArgs.STANDARD_CONFIDENCE_FOR_CALLING ); // low values used for isActive determination only, default/user-specified values used for actual calling
+        activeRegionArgs.genotypeArgs.standardConfidenceForCalling = Math.min(MAXMIN_CONFIDENCE_FOR_CONSIDERING_A_SITE_AS_POSSIBLE_VARIANT_IN_ACTIVE_REGION_DISCOVERY, hcArgs.standardArgs.genotypeArgs.standardConfidenceForCalling); // low values used for isActive determination only, default/user-specified values used for actual calling
         activeRegionArgs.CONTAMINATION_FRACTION = 0.0;
         activeRegionArgs.CONTAMINATION_FRACTION_FILE = null;
         // Seems that at least with some test data we can lose genuine haploid variation if we use ploidy == 1
@@ -571,6 +584,7 @@ public final class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
 
         // run the local assembler, getting back a collection of information on how we should proceed
         final AssemblyResultSet untrimmedAssemblyResult =  AssemblyBasedCallerUtils.assembleReads(region, givenAlleles, hcArgs, readsHeader, samplesList, logger, referenceReader, assemblyEngine, aligner, !hcArgs.doNotCorrectOverlappingBaseQualities);
+        ReadThreadingAssembler.addAssembledVariantsToEventMapOutput(untrimmedAssemblyResult, assembledEventMapVariants, hcArgs.maxMnpDistance, assembledEventMapVcfOutputWriter);
 
         if (assemblyDebugOutStream != null) {
             try {
@@ -776,6 +790,7 @@ public final class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
         if ( haplotypeBAMWriter.isPresent() ) {
             haplotypeBAMWriter.get().close();
         }
+        assembledEventMapVcfOutputWriter.ifPresent(writer -> {assembledEventMapVariants.get().forEach(writer::add); writer.close();});
         if ( referenceReader != null){
             try {
                 referenceReader.close();
